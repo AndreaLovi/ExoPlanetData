@@ -1,0 +1,266 @@
+---
+title: "Final Project.Esoplanet"
+author: '19205880'
+date: "15/8/2020"
+output: html_document
+runtime: shiny
+---
+```{r,1}
+exo_data <- read_csv("C:/Users/Lopo/Desktop/R Advanced/Data/exo_data.csv")
+
+library(readr)
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(shiny)
+library(ggiraph)
+library(gganimate)
+library(reshape2)
+library(tidyr)
+
+exo_data$flag %<>% as.factor
+exo_data $meth %<>% as.factor
+exo_data$year %<>% as.integer()
+```
+
+```{r,2}
+
+exo_data = exo_data %>% drop_na(meth)
+
+```
+
+```{r, 3}
+
+ggplot(exo_data, aes(x=log(dist), color = meth)) +
+  geom_histogram() +
+  labs(title="Distance from Sun",x="Log-Dist from Sun", y = "Distance")+
+  theme_bw()
+                  
+```
+
+
+```{r,4}
+exo_data$onclick <- sprintf("window.open(\"%s%s\")",
+                        "http://www.openexoplanetcatalogue.com/planet/",
+                        exo_data$id)
+
+gg_graph = ggplot(exo_data, aes(x = log(mass),y = log(dist),color = meth)) +
+xlab('Log(Mass)') +
+ylab('Log(Dist') +                 
+scale_color_discrete(name="Discovery Method")+
+geom_point_interactive(aes(data_id = id, tooltip =id,onclick = onclick)) +
+labs(title="Scatterplots of log-mass vs. log-distances")
+
+ggiraph(code = print(gg_graph))
+
+```
+
+```{r, 5}
+
+exo_data <- exo_data %>%  rename( jupiter_radius = radius )
+
+ 
+
+exo_data <- exo_data %>%  mutate( earth_radius = jupiter_radius * 11.2 )
+
+
+
+```
+
+
+
+```{r,6}
+ 
+
+
+Cluster <- exo_data %>% drop_na(earth_radius, period)  
+
+
+Cluster <- Cluster %>%  mutate(Log_Rad = log(earth_radius), Log_Per = log(period))
+
+
+data_kmeans <- Cluster %>% select(Log_Rad , Log_Per)
+
+
+set.seed(123)
+
+Cluster_kmeans  <- kmeans(data_kmeans, 4)
+
+
+```
+
+
+```{r,7}
+
+#Label new column type cluster
+
+Cluster$type <- Cluster_kmeans$cluster
+
+Cluster$type <- as.numeric(Cluster$type)
+
+Cluster$type[Cluster$type == 1] <- "cold_gas_giants"
+
+Cluster$type[Cluster$type == 2] <- "others"
+
+Cluster$type[Cluster$type == 3] <- "Rocky"
+
+Cluster$type[Cluster$type == 4] <- "hot_jupiters"
+
+
+#Plot clusters
+
+Cluster_kmeans$cluster <- as.factor(Cluster_kmeans$cluster)
+
+ggplot(data_kmeans, aes(x = Log_Per, y = Log_Rad , color = Cluster_kmeans$cluster)) +
+  geom_point() +                                     labs(title="Exoplanets Clustering")
+
+```
+
+
+
+```{r,8}
+
+ggplot(Cluster, aes(x = type, y = log(mass))) + 
+  geom_violin() + labs(title="Violin plot of log-mass of the exoplanet")
+
+```
+
+
+```{r, 9}
+library(lubridate)
+
+#Transform r_asc vector into difftime vector and create new seconds vector
+ 
+ 
+exo_data$r_asc <- gsub(" ", ":", exo_data$r_asc, fixed=TRUE) 
+
+exo_data$r_asc <- hms(exo_data$r_asc)
+
+exo_data$r_asc_sec <- period_to_seconds(exo_data$r_asc)
+
+# Transform declination into difftime vector and create new seconds vector
+
+exo_data$decl <- gsub(" ", ":", exo_data$decl, fixed=TRUE) # convert to dd:mm:ss, where dd=3600ss
+exo_data$decl <- hms(exo_data$decl)
+
+
+exo_data$decl_sec <- period_to_seconds(exo_data$decl)
+
+ggplot(exo_data, aes(r_asc_sec, decl_sec, color= meth)) +
+                            geom_point() + 
+                        labs(title="Celestial Map for Exoplanets", x="Right ascension (seconds)",
+                             y="declination (seconds)")
+```
+
+
+```{r, 10}
+Time_Serie <- exo_data %>% group_by(meth, year) %>%  summarise(Count = length(meth)) %>%
+                          mutate(Count = cumsum(Count))
+
+Time_Serie <- na.omit(Time_Serie)
+ 
+ 
+ggplot(Time_Serie, aes(x = year, y = Count, group =  meth)) + 
+   geom_line(aes(color = meth)) + 
+   geom_point(size = 2) + 
+   transition_reveal(year) + 
+   labs(title = '', y = 'Historical Planets Discovered by methodology')
+ 
+
+```
+
+
+
+```{r, 11}
+#Shinyapp works for input but do not give the right graph output
+
+
+ui = shinyUI(fluidPage(
+
+  # Application title
+  titlePanel("Planet discovery by method & date"),
+
+  # Sidebar with a slider input for number of bins
+  sliderInput("Years",
+                             "Years_of_discovering",
+                             min = 2009,
+                             max = 2018,
+                             value = 2009),
+  checkboxGroupInput("Methods", "Choose Method",
+                                         choices =
+                                           list("cold_gas_giant", "hot_jupiters",
+                                                "others", "Rocky", "all"))
+      ,
+
+    # Show a plot of the generated distribution
+    mainPanel(
+      plotOutput("PlanetsPlot")
+    )
+  )
+)
+ 
+
+# Define server logic required to draw a histogram
+server = shinyServer(function(input, output) {
+   
+  Cluster = Cluster[Cluster$year < input$year,]
+  
+  # Create the data.frame with selected year of input
+  
+  Cluster = Cluster[Cluster$year < input$year,]
+  Cluster = Cluster %>% drop_na(mass)
+  Cluster = Cluster %>% drop_na(dist)
+  
+  
+  output$PlanetPlot <- renderPlot({
+    
+    
+ if (input$cold_gas_giant == TRUE){a = Cluster[Cluster$type == "cold_gas_giant",]
+               plot(log(a$mass),log(a$dist), col = "blue",
+                      xlab = "Log_Mass", ylab = "Log_distance", main = "Rocky Planet Plot" )}
+    
+ if (input$hot_jupiters == TRUE) {a = Cluster[Cluster$type == "hot_jupyters",]
+                plot(log(a$mass),log(a$dist),col = "red",
+                      xlab = "Log_Mass", ylab = "Log_distance", main = "Hot jypiters Planet Plot" )}
+    
+  if (input$others == TRUE) {a = Cluster[Cluster$type == "others",]
+       plot(log(a$mass),log(a$dist), col = "yellow",
+              xlab = "Log_Mass", ylab = "Log_distance", main = "Others Planet Plot")}
+    
+  if (input$Rocky == TRUE) {a = Cluster[Cluster$type == "Rocky",]
+              plot(log(a$mass),log(a$dist), col = "gray",
+                      xlab = "Log_Mass", ylab = "Log_distance", main = "Rocky Planet Plot")}
+    
+  if(input$all == TURE) {Plot = plot(log(Cluster$mass, Cluster$dist))}
+    
+ })
+  })
+
+shinyApp( ui = ui, server = server)
+
+```
+
+
+```{r, 12}
+standard_data <- exo_data[,c("host_mass","host_temp","axis", "period")] 
+
+standard_data <- na.omit(standard_data) 
+
+standard_data <- standard_data %>%       mutate(host_mass = log(host_mass), host_temp = log(host_temp), axis = log(axis),period = log(period)) 
+
+
+
+data_matrix =  as.data.frame(standard_data[,c("period", "host_mass","host_temp","axis")])
+
+
+
+
+
+reg = lm(formula = data_matrix$period~ data_matrix$host_mass+ data_matrix$host_temp + data_matrix$axis)
+
+```
+
+```{r,13}
+summary(reg)
+
+```
